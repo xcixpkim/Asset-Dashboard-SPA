@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- Google Search Console -->
+<meta name="google-site-verification" content="Q5nfMziST5tgsHaAJ7CjpcWxddsXkPrGG76G9H2fJ8g" />
+<meta name="googlebot" content="noindex" />
+<title>연령대별 가상 자산 관리 대시보드 | Asset-Dashboard-SPA</title>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<!-- React / ReactDOM (UMD) -->
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<!-- Recharts UMD 의존성: prop-types, react-is (Recharts보다 먼저 로드) -->
+<script src="https://cdn.jsdelivr.net/npm/prop-types@15.8.1/prop-types.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-is@18.3.1/umd/react-is.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js"></script>
+<!-- Lucide React 아이콘 -->
+<script src="https://cdn.jsdelivr.net/npm/lucide-react@0.383.0/dist/umd/lucide-react.min.js"></script>
+<!-- Babel: 브라우저 내 JSX 컴파일 -->
+<script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.24.7/babel.min.js"></script>
+<style>
+  body { font-family: -apple-system, "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif; background:#f4f7fc; }
+  @keyframes pop { from { opacity:0; transform: translateY(12px) scale(.97);} to { opacity:1; transform:none; } }
+  .pop { animation: pop .2s ease-out; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useMemo } = React;
+const { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid, ResponsiveContainer, PieChart, Pie, Cell } = Recharts;
+// Lucide UMD 전역 이름이 빌드마다 달라 안전하게 탐색 + 아이콘이 없어도 앱이 죽지 않도록 대체 컴포넌트 사용
+const LU = window.lucideReact || window.LucideReact || window['lucide-react'] || window.lucide || {};
+const safeIcon = (name) => {
+  const C = LU[name];
+  return (typeof C === 'function' || (typeof C === 'object' && C !== null && C.$$typeof)) ? C : () => null;
+};
+const [LayoutDashboard, Users, Search, X, Wallet, ShieldCheck, ShoppingBag, Landmark, MapPin, RefreshCw] =
+  ['LayoutDashboard', 'Users', 'Search', 'X', 'Wallet', 'ShieldCheck', 'ShoppingBag', 'Landmark', 'MapPin', 'RefreshCw'].map(safeIcon);
+
+/* ---------- 유틸 ---------- */
+const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+const pick = (arr) => arr[rand(0, arr.length - 1)];
+
+// 금액 포맷: 4,560만 원 / 1억 2,300만 원
+function fmtWon(n) {
+  const man = Math.round(n / 10000);
+  if (man >= 10000) {
+    const eok = Math.floor(man / 10000), rest = man % 10000;
+    return `${eok}억${rest ? ' ' + rest.toLocaleString() + '만' : ''} 원`;
+  }
+  return `${man.toLocaleString()}만 원`;
+}
+const fmtFull = (n) => `${Math.round(n).toLocaleString()}원`; // 45,600,000원
+
+const ageGroup = (age) => age < 30 ? '20대' : age < 40 ? '30대' : age < 50 ? '40대' : '50대 이상';
+const GROUPS = ['20대', '30대', '40대', '50대 이상'];
+const CATS = ['식비', '쇼핑', '교통', '주거', '여가', '의료'];
+const CAT_COLORS = ['#2563eb', '#38bdf8', '#6366f1', '#0ea5e9', '#93c5fd', '#1e3a8a'];
+const REGIONS = ['서울', '경기', '인천', '부산', '대구', '대전', '광주', '울산', '강원', '충북', '충남', '전북', '전남', '경북', '경남', '제주'];
+const SUR = ['김','이','박','최','정','강','조','윤','장','임'];
+const GIV = ['민준','서연','도윤','지우','하준','서윤','예준','지민','시우','하은'];
+
+// API의 state 문자열을 한국 시·도로 일관되게 매핑 (한 줄)
+const regionFrom = (s) => REGIONS[[...(s || 'x')].reduce((h, c) => h + c.charCodeAt(0), 0) % REGIONS.length];
+
+// 나이·지역 기반 가상 금융 데이터 생성
+function mockFinance(age, region) {
+  const ageF = Math.min(1, (age - 18) / 40);             // 나이가 많을수록 자산↑
+  const cityF = ['서울', '경기'].includes(region) ? 1.15 : 1;
+  const savings = Math.round(Math.min(2e8, (1e7 + Math.random() * 1.9e8 * (0.25 + ageF * 0.75)) * cityF) / 1e5) * 1e5;
+  const loan = Math.round(Math.random() * 1e8 * (age < 55 ? 1 : 0.5) / 1e5) * 1e5;
+  const invest = Math.round(Math.random() * 5e7 / 1e5) * 1e5;
+  const spend = Math.round((1.2e6 + Math.random() * 3.3e6) / 1e4) * 1e4;
+  return { savings, loan, invest, spend, topCat: pick(CATS), credit: rand(300, 1000) };
+}
+
+function buildCustomers(results) {
+  return results.map((u, i) => {
+    const age = u.dob.age, region = regionFrom(u.location.state);
+    return { id: i, name: pick(SUR) + pick(GIV), age, group: ageGroup(age), region,
+      ...mockFinance(age, region) };
+  });
+}
+const totalAsset = (c) => c.savings + c.invest - c.loan;   // 순자산
+const creditInfo = (s) => s >= 900 ? ['최우수', 'text-blue-700 bg-blue-100'] : s >= 700 ? ['우수', 'text-sky-700 bg-sky-100']
+  : s >= 500 ? ['보통', 'text-amber-700 bg-amber-100'] : ['주의', 'text-rose-700 bg-rose-100'];
+function tendency(c) {
+  if (c.loan > c.savings * 0.6) return '부채 관리형';
+  if (c.invest > c.savings * 0.3) return '공격 투자형';
+  if (c.spend * 12 > c.savings * 0.5) return '소비 중심형';
+  return '안정 저축형';
+}
+
+/* ---------- 공통 UI ---------- */
+const Skel = ({ className = '' }) => <div className={`animate-pulse bg-slate-200 rounded-xl ${className}`} />;
+
+// 성(姓) 이니셜 아바타 — randomuser 사진은 서양인 위주라 사용하지 않음
+const Avatar = ({ name, size = 40 }) => (
+  <div className="shrink-0 rounded-full bg-gradient-to-br from-blue-500 to-sky-400 text-white font-bold flex items-center justify-center"
+    style={{ width: size, height: size, fontSize: size * 0.42 }}>{name[0]}</div>
+);
+
+function Card({ icon: Icon, label, value, sub }) {
+  return (
+    <div className="bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-100">
+      <div className="flex items-center gap-2 text-slate-500 text-sm"><span className="p-2 rounded-lg bg-blue-50 text-blue-600"><Icon size={16} /></span>{label}</div>
+      <div className="mt-3 text-xl sm:text-2xl font-bold text-slate-900">{value}</div>
+      <div className="text-xs text-slate-400 mt-1">{sub}</div>
+    </div>
+  );
+}
+
+/* ---------- 고객 상세 모달 ---------- */
+function Modal({ c, onClose }) {
+  const [lv, cls] = creditInfo(c.credit);
+  const pct = ((c.credit - 300) / 700) * 100;
+  const total = c.savings + c.invest + c.loan || 1;
+  const bars = [['예적금', c.savings, 'bg-blue-600'], ['투자', c.invest, 'bg-sky-400'], ['대출', c.loan, 'bg-rose-400']];
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/50 p-0 sm:p-4" onClick={onClose}>
+      <div className="pop bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl p-5 sm:p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <Avatar name={c.name} size={56} />
+            <div>
+              <div className="text-lg font-bold">{c.name}</div>
+              <div className="text-sm text-slate-500 flex items-center gap-1"><MapPin size={12} />{c.region} · {c.age}세 · {c.group}</div>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-full hover:bg-slate-100" aria-label="닫기"><X size={18} /></button>
+        </div>
+
+        <div className="mt-5 rounded-2xl bg-gradient-to-br from-blue-600 to-blue-500 text-white p-4">
+          <div className="text-xs opacity-80">순자산 (예적금 + 투자 − 대출)</div>
+          <div className="text-2xl font-bold mt-1">{fmtWon(totalAsset(c))}</div>
+          <div className="text-xs opacity-80 mt-1">{fmtFull(totalAsset(c))}</div>
+        </div>
+
+        <div className="mt-5">
+          <div className="flex items-center justify-between text-sm mb-2">
+            <span className="font-semibold">신용 점수</span>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`}>{lv}</span>
+          </div>
+          <div className="relative h-3 rounded-full bg-gradient-to-r from-rose-300 via-amber-300 to-blue-500">
+            <div className="absolute -top-1 w-5 h-5 rounded-full bg-white border-4 border-blue-700 shadow" style={{ left: `calc(${pct}% - 10px)` }} />
+          </div>
+          <div className="flex justify-between text-xs text-slate-400 mt-1"><span>300</span><b className="text-slate-800 text-sm">{c.credit}점</b><span>1,000</span></div>
+        </div>
+
+        <div className="mt-5">
+          <div className="text-sm font-semibold mb-2">자산 구성</div>
+          <div className="flex h-3 rounded-full overflow-hidden bg-slate-100">
+            {bars.map(([n, v, col]) => <div key={n} className={col} style={{ width: `${(v / total) * 100}%` }} />)}
+          </div>
+          <div className="mt-3 space-y-1.5 text-sm">
+            {bars.map(([n, v, col]) => (
+              <div key={n} className="flex justify-between"><span className="flex items-center gap-2"><i className={`w-2.5 h-2.5 rounded-full ${col}`} />{n}</span><b>{fmtWon(v)}</b></div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-3 text-sm">
+          <div className="rounded-xl bg-slate-50 p-3"><div className="text-slate-500 text-xs">월평균 소비</div><b>{fmtWon(c.spend)}</b></div>
+          <div className="rounded-xl bg-slate-50 p-3"><div className="text-slate-500 text-xs">최다 소비 카테고리</div><b>{c.topCat}</b></div>
+          <div className="rounded-xl bg-blue-50 p-3 col-span-2"><div className="text-blue-600 text-xs">금융 성향</div><b className="text-blue-900">{tendency(c)}</b></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- 대시보드 / 리스트 화면 ---------- */
+function Dashboard({ data, loading }) {
+  const stats = useMemo(() => {
+    if (!data.length) return null;
+    const avg = (f) => data.reduce((s, c) => s + f(c), 0) / data.length;
+    const catCount = CATS.map((n) => ({ name: n, value: data.filter((c) => c.topCat === n).length })).filter((x) => x.value);
+    const byAge = GROUPS.map((g) => {
+      const l = data.filter((c) => c.group === g);
+      const m = (f) => l.length ? Math.round(l.reduce((s, c) => s + f(c), 0) / l.length / 10000) : 0;
+      return { name: g, 예적금: m((c) => c.savings), 대출: m((c) => c.loan) };
+    });
+    return { asset: avg(totalAsset), credit: avg((c) => c.credit), top: [...catCount].sort((a, b) => b.value - a.value)[0], catCount, byAge };
+  }, [data]);
+
+  if (loading || !stats) return (
+    <div className="space-y-4"><div className="grid grid-cols-1 sm:grid-cols-3 gap-4">{[0, 1, 2].map((i) => <Skel key={i} className="h-32" />)}</div><Skel className="h-80" /></div>
+  );
+  return (
+    <div className="space-y-4 sm:space-y-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <Card icon={Wallet} label="평균 순자산" value={fmtWon(stats.asset)} sub={`고객 ${data.length}명 기준`} />
+        <Card icon={ShieldCheck} label="평균 신용점수" value={`${Math.round(stats.credit)}점`} sub="300 ~ 1,000점" />
+        <Card icon={ShoppingBag} label="주요 소비 카테고리" value={stats.top.name} sub={`${stats.top.value}명이 가장 많이 사용`} />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
+        <div className="lg:col-span-2 bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-100">
+          <h2 className="font-bold text-slate-800">연령대별 평균 예적금 vs 대출</h2>
+          <p className="text-xs text-slate-400 mb-3">단위: 만 원</p>
+          <div className="h-64 sm:h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={stats.byAge} margin={{ left: -10, right: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => v.toLocaleString()} />
+                <Tooltip formatter={(v) => `${v.toLocaleString()}만 원`} />
+                <Legend />
+                <Bar dataKey="예적금" fill="#2563eb" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="대출" fill="#93c5fd" radius={[6, 6, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        <div className="bg-white rounded-2xl p-4 sm:p-5 shadow-sm border border-slate-100">
+          <h2 className="font-bold text-slate-800">소비 카테고리 분포</h2>
+          <div className="h-64 sm:h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={stats.catCount} dataKey="value" nameKey="name" innerRadius="50%" outerRadius="80%" paddingAngle={2}>
+                  {stats.catCount.map((e) => <Cell key={e.name} fill={CAT_COLORS[CATS.indexOf(e.name)]} />)}
+                </Pie>
+                <Tooltip formatter={(v) => `${v}명`} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CustomerList({ data, loading, onSelect }) {
+  const [q, setQ] = useState('');
+  const [f, setF] = useState('전체');
+  const list = data.filter((c) => c.name.includes(q.trim()) && (f === '전체' || c.group === f));
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+      <div className="p-4 sm:p-5 flex flex-col sm:flex-row gap-3 border-b border-slate-100">
+        <div className="relative flex-1">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="이름으로 검색"
+            className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-50 border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        </div>
+        <div className="flex gap-2 overflow-x-auto">
+          {['전체', ...GROUPS].map((g) => (
+            <button key={g} onClick={() => setF(g)}
+              className={`whitespace-nowrap px-3.5 py-2 rounded-xl text-sm font-medium ${f === g ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{g}</button>
+          ))}
+        </div>
+      </div>
+      {loading ? (
+        <div className="p-4 space-y-3">{Array.from({ length: 6 }).map((_, i) => <Skel key={i} className="h-14" />)}</div>
+      ) : list.length === 0 ? (
+        <div className="p-10 text-center text-slate-400 text-sm">조건에 맞는 고객이 없어요. 검색어나 필터를 바꿔보세요.</div>
+      ) : (
+        <ul className="divide-y divide-slate-100">
+          {list.map((c) => {
+            const [lv, cls] = creditInfo(c.credit);
+            return (
+              <li key={c.id}>
+                <button onClick={() => onSelect(c)} className="w-full flex items-center gap-3 px-4 sm:px-5 py-3 hover:bg-blue-50/50 text-left">
+                  <Avatar name={c.name} size={40} />
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-slate-800 truncate">{c.name} <span className="text-xs font-normal text-slate-400">{c.age}세 · {c.group}</span></div>
+                    <div className="text-xs text-slate-400">{c.region} · {c.topCat} 중심 소비</div>
+                  </div>
+                  <span className={`hidden sm:inline px-2 py-0.5 rounded-full text-xs font-semibold ${cls}`}>{lv} {c.credit}</span>
+                  <div className="text-right"><div className="font-bold text-slate-900 text-sm sm:text-base">{fmtWon(totalAsset(c))}</div><div className="text-[11px] text-slate-400">순자산</div></div>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/* ---------- 앱 루트 ---------- */
+function App() {
+  const [data, setData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [tab, setTab] = useState('dash');
+  const [sel, setSel] = useState(null);
+
+  // randomuser.me 호출 (실패 시 로컬 더미로 대체)
+  const load = async () => {
+    setLoading(true); setError('');
+    try {
+      const res = await fetch('https://randomuser.me/api/?results=40&inc=dob,location&noinfo');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const json = await res.json();
+      setData(buildCustomers(json.results));
+    } catch (e) {
+      setError('API 연결에 실패해 임시 데이터로 표시 중이에요.');
+      const fake = Array.from({ length: 40 }, (_, i) => ({ dob: { age: rand(20, 65) }, location: { state: String(i) } }));
+      setData(buildCustomers(fake));
+    }
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const nav = [['dash', '대시보드', LayoutDashboard], ['list', '고객 리스트', Users]];
+  return (
+    <div className="min-h-screen md:flex">
+      {/* PC: 좌측 내비게이션 */}
+      <aside className="hidden md:flex md:flex-col w-60 shrink-0 bg-white border-r border-slate-100 p-5 sticky top-0 h-screen">
+        <div className="flex items-center gap-2 font-bold text-blue-700 text-lg mb-8"><Landmark /> Flow Asset</div>
+        {nav.map(([k, n, Icon]) => (
+          <button key={k} onClick={() => setTab(k)} className={`flex items-center gap-3 px-4 py-3 rounded-xl mb-1 text-sm font-medium ${tab === k ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}><Icon size={18} />{n}</button>
+        ))}
+        <p className="mt-auto text-xs text-slate-400">모든 금융 데이터는 무작위로 만든 가상 값입니다.</p>
+      </aside>
+
+      <main className="flex-1 min-w-0 p-4 sm:p-6 lg:p-8 pb-24 md:pb-8">
+        <header className="flex items-center justify-between mb-5">
+          <div>
+            <h1 className="text-xl sm:text-2xl font-bold text-slate-900">{tab === 'dash' ? '연령대별 자산 대시보드' : '가상 고객 리스트'}</h1>
+            <p className="text-sm text-slate-500 mt-0.5">가상 고객 40명의 자산·소비·신용 현황</p>
+          </div>
+          <button onClick={load} disabled={loading} className="flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-600 text-white text-sm font-medium disabled:opacity-60">
+            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} />새 고객 불러오기
+          </button>
+        </header>
+        {error && <div className="mb-4 rounded-xl bg-amber-50 text-amber-700 text-sm px-4 py-3">{error}</div>}
+        {tab === 'dash' ? <Dashboard data={data} loading={loading} /> : <CustomerList data={data} loading={loading} onSelect={setSel} />}
+      </main>
+
+      {/* 모바일: 하단 탭바 */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 grid grid-cols-2 z-40 pb-[env(safe-area-inset-bottom)]">
+        {nav.map(([k, n, Icon]) => (
+          <button key={k} onClick={() => setTab(k)} className={`flex flex-col items-center gap-1 py-2.5 text-xs font-medium ${tab === k ? 'text-blue-600' : 'text-slate-400'}`}><Icon size={20} />{n}</button>
+        ))}
+      </nav>
+
+      {sel && <Modal c={sel} onClose={() => setSel(null)} />}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
