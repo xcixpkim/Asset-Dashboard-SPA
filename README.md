@@ -38,7 +38,7 @@
 
 ### GitHub Pages
 
-https://xcixcode.github.io/Asset-Dashboard-SPA/
+https://xcixpkim.github.io/Asset-Dashboard-SPA/
 
 ### 로컬에서 실행
 
